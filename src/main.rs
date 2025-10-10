@@ -1,18 +1,15 @@
 use std::{
     io::{prelude::*, BufReader}, net::{TcpListener, TcpStream}
 };
-use reqwest::{self, Client, Response};
-use serde::{Deserialize, Serialize};
-use serde_json;
+use reqwest::{self, Client};
+use serde::{Serialize};
+use serde_json::{self, json};
+
+mod types;
+use types::{GameMetadata, GameData};
 
 const COMLINK:&str = "http://localhost:3000";
 const ASSET_EXTRACTOR:&str = "http://localhost:3001";
-
-#[derive(Debug, Deserialize, Serialize)]
-struct GameMetadata {
-    assetVersion: u32,
-    latestGamedataVersion: String
-}
 
 #[tokio::main]
 async fn main() {
@@ -72,9 +69,10 @@ async fn check_comlink() -> Result<String, reqwest::Error> {
 }
 
 
-async fn get_game_data() -> Result<GameMetadata, reqwest::Error> {
+async fn get_game_data() -> Result<GameData, reqwest::Error> {
     let client = Client::new();
     let meta_url = format!("{COMLINK}/metadata");
+    println!("Getting game metadata...");
     let metadata = client
         .post(&meta_url)
         .send()
@@ -82,8 +80,33 @@ async fn get_game_data() -> Result<GameMetadata, reqwest::Error> {
         .json::<GameMetadata>()
         .await?;
 
+    println!("Getting game data... (Version: {})", metadata.latestGamedataVersion);
+    let data_url = format!("{COMLINK}/data");
+    let request_body = json!({
+        "payload": {
+            "version": metadata.latestGamedataVersion.to_string(),
+            "includePveUnits": false,
+            "requestSegment": 3,
+        },
+        "enums": false
+    });
+    let gamedata = client.post(data_url).json(&request_body).send().await?
+        .json::<GameData>()
+        .await?;
 
-    println!("Gamedata Version : {}", metadata.latestGamedataVersion);
 
-    Ok(metadata)
+    Ok(gamedata)
 }
+
+// curl -X POST "https://localhost:3000/data" \
+//      -H "Content-Type: application/json" \
+//      -d '{
+//            "payload": {
+//              "version": "0.37.0:siY-7g7ETs6TYA1Vqs19iA",
+//              "includePveUnits": false,
+//              "devicePlatform": "Android",
+//              "requestSegment": 0,
+//              "items": "string"
+//            },
+//            "enums": false
+//          }'
