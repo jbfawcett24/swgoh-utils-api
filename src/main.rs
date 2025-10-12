@@ -1,4 +1,4 @@
-use std::{fmt::format, os::unix::fs::FileExt, path::Path, vec};
+use std::{io, collections::btree_map::Range, fmt::format, os::unix::fs::FileExt, path::Path, vec};
 
 use reqwest::{self, Client, Error};
 use serde::{Serialize, Deserialize};
@@ -73,22 +73,81 @@ async fn get_game_data() -> Result<GameData, reqwest::Error> {
     let gamedata = client.post(data_url).json(&request_body).send().await?
         .json::<GameData>()
         .await?;
+
+    let gamedata = splice_game_data(gamedata);
+    save(&gamedata).await;
+
     get_assets(&gamedata, &metadata.assetVersion).await;
     Ok(gamedata)
 }
 
+async fn save(data: &GameData) {
+    let mut save_file = File::create("data.json").await.unwrap();
+    save_file.write_all(serde_json::to_string_pretty(data).unwrap().as_bytes()).await;
+}
+
+use std::collections::HashSet;
+
+fn splice_game_data(mut gamedata: GameData) -> GameData {
+    let filter_keywords = ["_GLE", "SPEEDERBIKE", "MARQUEE", "EVENT"];
+    let mut seen_base_ids:HashSet<String> = HashSet::new();
+
+    gamedata.units.retain(|unit| {
+        // Check if baseId contains any unwanted substrings
+        let contains_blocked = filter_keywords.iter().any(|keyword| unit.baseId.contains(keyword));
+        
+        // If it's blocked, we remove it
+        if contains_blocked {
+            return false;
+        }
+
+        // If it's a duplicate, we remove it
+        if !seen_base_ids.insert(unit.baseId.clone()) {
+            return false;
+        }
+
+        true // Otherwise, keep it
+    });
+
+    gamedata
+}
+
+
 async fn get_assets(data:&GameData, asset_version:&u32) {
     println!("{}", asset_version);
     let mut asset_list:Vec<String> = vec![];
+    let asset_files: HashSet<String> = std::fs::read_dir("src/assets")
+    .unwrap()
+    .filter_map(|entry| {
+        entry.ok().and_then(|e| {
+            e.file_name()
+                .into_string()
+                .ok()
+        })
+    })
+    .collect();
+
     for unit in &data.units {
-        let asset_name = unit.thumbnailName.trim_start_matches("tex.").to_string();
-        asset_list.push(asset_name);
+        let check_name = format!("{}.png", unit.thumbnailName);
+        if !asset_files.contains(&check_name) {
+            let asset_name = unit.thumbnailName.trim_start_matches("tex.").to_string();
+            asset_list.push(asset_name);
+        }
     }
 
-    for asset in asset_list {
+    let mut cur_num = 0;
+    for asset in &asset_list {
+        let number = &asset_list.len();
+        println!("Downloading asset: {} ({}/{})", asset, cur_num, number);
         let url = format!("{}/Asset/single?assetName={}&version={}&forceReDownload=false", ASSET_EXTRACTOR, &asset, &asset_version);
         download_asset(url, &asset).await.unwrap();
+        cur_num+=1;
     }
+}
+
+fn download_all(directory_path: &str) -> io::Result<bool> {
+    let mut entries = std::fs::read_dir(directory_path)?;
+    Ok(entries.next().is_none())
 }
 
 
@@ -98,7 +157,7 @@ async fn download_asset(url: String, filename: &str) -> Result<(), Box<dyn std::
 
     let directory = "./src/assets";
     let download_path = Path::new(directory);
-    let full_filename = format!("{}.png", filename);
+    let full_filename = format!("tex.{}.png", filename);
     let full_path = download_path.join(full_filename);
 
     if !Path::new(directory).exists() {
