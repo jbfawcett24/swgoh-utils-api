@@ -1,71 +1,51 @@
-use std::{
-    io::{prelude::*, BufReader}, net::{TcpListener, TcpStream}
-};
-use reqwest::{self, Client};
-use serde::{Serialize};
+use std::{fmt::format, os::unix::fs::FileExt, path::Path, vec};
+
+use reqwest::{self, Client, Error};
+use serde::{Serialize, Deserialize};
 use serde_json::{self, json};
+use axum::{
+    body::Bytes, extract::Json, http::StatusCode, response::IntoResponse, routing::{get, post}, Form, Router
+};
+use tokio::{fs::{self, File}, io::AsyncWriteExt};
 
 mod types;
 use types::{GameMetadata, GameData};
+
+mod characters;
+use characters::characters;
 
 const COMLINK:&str = "http://localhost:3000";
 const ASSET_EXTRACTOR:&str = "http://localhost:3001";
 
 #[tokio::main]
+//endpoints - 
+//characters - all character names, skills, image, id - charId just sends one
+//account - account information, all character gear, star, relic
+//guild - accounts guild, with number of each character unlocked, each user fleet, squad, and GAC rank - charId returns dictionary of all characters at every level
 async fn main() {
-    let listener = TcpListener::bind("127.0.0.1:7474").unwrap();
+    get_game_data().await.unwrap();
 
-    for stream in listener.incoming() {
-        let stream = stream.unwrap();
-        handle_connection(stream).await;
-    }
+    let app = Router::new()
+        .route("/", get(root))
+        .route("/characters", post(characters))
+        .route("/account", post(account))
+        .route("/guild", post(guild));
+
+    let listener  = tokio::net::TcpListener::bind("0.0.0.0:7474").await.unwrap();
+    axum::serve(listener, app).await.unwrap();
 }
 
-async fn handle_connection(stream: TcpStream){
-    let buf_reader = BufReader::new(&stream);
-    let request_line = buf_reader.lines().next().unwrap().unwrap();
-    let status_line = "HTTP/1.1 200 OK";
-    println!("{request_line}");
-
-    if request_line == "GET / HTTP/1.1" {
-        let content = match check_comlink().await {
-            Ok(body) => body.to_string(), 
-            Err(_) => "Error".to_string()
-        };
-        println!("{}", content);
-
-        return_data(status_line, &content, "application/json", stream);
-    } else if request_line == "GET /metadata HTTP/1.1" {
-        let content = get_game_data().await.unwrap();
-
-        return_data(status_line, &content, "application/json", stream);
-    }
-    else {
-        let status_line = "HTTP/1.1 404 NOT FOUND";
-        let content = "404 Not Found :(";
-
-        return_data(status_line, &content, "text/html", stream);
-    }
+async fn root() -> &'static str{
+    println!("We Be Request");
+    "Hello World"
 }
 
-
-fn return_data<T: Serialize>(status: &str, content: &T, content_type: &str, mut stream: TcpStream,) {
-    let content = serde_json::to_string(content).unwrap();
-    let response = format!("{status}\r\nContent-Type: {content_type}\r\n\r\n{content}");
-    println!("{}", response);
-    stream.write_all(response.as_bytes()).unwrap();
+async fn account() -> &'static str{
+    "Hello account"
 }
 
-async fn check_comlink() -> Result<String, reqwest::Error> {
-    let url = format!("{COMLINK}/readyz");
-    let body = reqwest::get(url)
-        .await?
-        .text()
-        .await?;
-
-    println!("body = {body:?}");
-
-    Ok(body)
+async fn guild() -> &'static str {
+    "Hello guild"
 }
 
 
@@ -93,11 +73,45 @@ async fn get_game_data() -> Result<GameData, reqwest::Error> {
     let gamedata = client.post(data_url).json(&request_body).send().await?
         .json::<GameData>()
         .await?;
-
-
+    get_assets(&gamedata, &metadata.assetVersion).await;
     Ok(gamedata)
 }
 
+async fn get_assets(data:&GameData, asset_version:&u32) {
+    println!("{}", asset_version);
+    let mut asset_list:Vec<String> = vec![];
+    for unit in &data.units {
+        let asset_name = unit.thumbnailName.trim_start_matches("tex.").to_string();
+        asset_list.push(asset_name);
+    }
+
+    for asset in asset_list {
+        let url = format!("{}/Asset/single?assetName={}&version={}&forceReDownload=false", ASSET_EXTRACTOR, &asset, &asset_version);
+        download_asset(url, &asset).await.unwrap();
+    }
+}
+
+
+async fn download_asset(url: String, filename: &str) -> Result<(), Box<dyn std::error::Error>>{
+    let client = reqwest::Client::new();
+    let response = client.get(url).send().await?;
+
+    let directory = "./src/assets";
+    let download_path = Path::new(directory);
+    let full_filename = format!("{}.png", filename);
+    let full_path = download_path.join(full_filename);
+
+    if !Path::new(directory).exists() {
+        fs::create_dir_all(directory).await?;
+    }
+
+    let mut file = File::create(full_path).await?;
+    let bytes = response.bytes().await?;
+    
+    file.write_all(&bytes).await?;
+
+    Ok(())
+}
 // curl -X POST "https://localhost:3000/data" \
 //      -H "Content-Type: application/json" \
 //      -d '{
