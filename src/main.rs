@@ -1,12 +1,12 @@
-use std::{io, collections::btree_map::Range, fmt::format, os::unix::fs::FileExt, path::Path, vec};
+use std::{path::{Path, PathBuf}, vec, sync::Arc};
 
-use reqwest::{self, Client, Error};
-use serde::{Serialize, Deserialize};
+use reqwest::{self, Client};
 use serde_json::{self, json};
 use axum::{
-    body::Bytes, extract::Json, http::StatusCode, response::IntoResponse, routing::{get, post}, Form, Router
+    response::IntoResponse, routing::{get, get_service, post}, Router, extract::{State, Json}
 };
 use tokio::{fs::{self, File}, io::AsyncWriteExt};
+use tower_http::services::ServeDir;
 
 mod types;
 use types::{GameMetadata, GameData};
@@ -22,21 +22,38 @@ const ASSET_EXTRACTOR:&str = "http://localhost:3001";
 //characters - all character names, skills, image, id - charId just sends one
 //account - account information, all character gear, star, relic
 //guild - accounts guild, with number of each character unlocked, each user fleet, squad, and GAC rank - charId returns dictionary of all characters at every level
+//journey - journey guide information
 async fn main() {
-    get_game_data().await.unwrap();
+    let gamedata = get_game_data().await.unwrap();
+    let gamedata = Arc::new(gamedata);
 
+    let image_dir = PathBuf::from("./assets");
+    
     let app = Router::new()
         .route("/", get(root))
         .route("/characters", post(characters))
         .route("/account", post(account))
-        .route("/guild", post(guild));
+        .route("/guild", get(guild))
+        .nest(
+            "/assets",
+            Router::new()
+                .fallback_service(
+                    get_service(ServeDir::new(image_dir))
+                        .handle_error(|error| async move {
+                            (
+                                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                                format!("Unhandled internal error: {}", error),
+                            )
+                        }),
+                ),
+        )
+        .with_state(gamedata);
 
     let listener  = tokio::net::TcpListener::bind("0.0.0.0:7474").await.unwrap();
     axum::serve(listener, app).await.unwrap();
 }
 
 async fn root() -> &'static str{
-    println!("We Be Request");
     "Hello World"
 }
 
@@ -44,8 +61,8 @@ async fn account() -> &'static str{
     "Hello account"
 }
 
-async fn guild() -> &'static str {
-    "Hello guild"
+async fn guild(State(gamedata): State<Arc<GameData>>) -> impl IntoResponse {
+    Json((*gamedata).clone())
 }
 
 
@@ -59,7 +76,7 @@ async fn get_game_data() -> Result<GameData, reqwest::Error> {
         .await?
         .json::<GameMetadata>()
         .await?;
-
+    println!("Asset Version: {}", metadata.assetVersion);
     println!("Getting game data... (Version: {})", metadata.latestGamedataVersion);
     let data_url = format!("{COMLINK}/data");
     let request_body = json!({
@@ -78,12 +95,13 @@ async fn get_game_data() -> Result<GameData, reqwest::Error> {
     save(&gamedata).await;
 
     get_assets(&gamedata, &metadata.assetVersion).await;
+    let gamedata = add_images_gamedata(gamedata);
     Ok(gamedata)
 }
 
 async fn save(data: &GameData) {
     let mut save_file = File::create("data.json").await.unwrap();
-    save_file.write_all(serde_json::to_string_pretty(data).unwrap().as_bytes()).await;
+    save_file.write_all(serde_json::to_string_pretty(data).unwrap().as_bytes()).await.unwrap();
 }
 
 use std::collections::HashSet;
@@ -116,7 +134,7 @@ fn splice_game_data(mut gamedata: GameData) -> GameData {
 async fn get_assets(data:&GameData, asset_version:&u32) {
     println!("{}", asset_version);
     let mut asset_list:Vec<String> = vec![];
-    let asset_files: HashSet<String> = std::fs::read_dir("src/assets")
+    let asset_files: HashSet<String> = std::fs::read_dir("assets")
     .unwrap()
     .filter_map(|entry| {
         entry.ok().and_then(|e| {
@@ -145,17 +163,11 @@ async fn get_assets(data:&GameData, asset_version:&u32) {
     }
 }
 
-fn download_all(directory_path: &str) -> io::Result<bool> {
-    let mut entries = std::fs::read_dir(directory_path)?;
-    Ok(entries.next().is_none())
-}
-
-
 async fn download_asset(url: String, filename: &str) -> Result<(), Box<dyn std::error::Error>>{
     let client = reqwest::Client::new();
     let response = client.get(url).send().await?;
 
-    let directory = "./src/assets";
+    let directory = "assets";
     let download_path = Path::new(directory);
     let full_filename = format!("tex.{}.png", filename);
     let full_path = download_path.join(full_filename);
@@ -170,6 +182,16 @@ async fn download_asset(url: String, filename: &str) -> Result<(), Box<dyn std::
     file.write_all(&bytes).await?;
 
     Ok(())
+}
+
+fn add_images_gamedata(mut gamedata:GameData) -> GameData {
+    for unit in &mut gamedata.units {
+        let filepath = format!("assets/{}.png", unit.thumbnailName);
+        println!("{}", &filepath);
+        unit.iconPath = Some(filepath);
+    }
+
+    gamedata
 }
 // curl -X POST "https://localhost:3000/data" \
 //      -H "Content-Type: application/json" \

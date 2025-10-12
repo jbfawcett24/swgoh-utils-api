@@ -1,24 +1,32 @@
 #![allow(non_snake_case)]
 
+use std::{path::PathBuf, sync::Arc};
 use serde::{Serialize, Deserialize};
+use serde_json::{json, Value};
 use axum::{
-    extract::Json, response::IntoResponse, http::StatusCode
+    extract::{Json, State}, http::StatusCode, response::{IntoResponse, Response}
 };
+
+use crate::types::GameData;
 
 #[derive(Deserialize, Serialize)]
 pub struct CharPayload {
-    charId: String
+    charId: Option<String>
 }
 
-pub async fn characters(Json(payload): Json<CharPayload>) -> Result<impl IntoResponse, impl IntoResponse> {
+pub async fn characters(gamedata: State<Arc<GameData>>, Json(payload): Json<CharPayload>) -> Result<Json<Value>, (StatusCode, String)> {
     println!("We been pinged");
-    println!("charId: {}", payload.charId);
-    if payload.charId.trim().is_empty() {
-        let body = Json(serde_json::json!({
-            "error": "charId cannot be empty"
-        }));
-        return Err((StatusCode::BAD_REQUEST, body));
+    match payload.charId.as_deref() {
+        None | Some("") => {
+            return Ok(Json(json!(**gamedata)));
+        }
+        Some(charId) => {
+            match gamedata.units.iter().find(|u| u.baseId == charId) {
+                Some(unit) => Ok(Json(json!(unit))),
+                None => Err((StatusCode::NOT_FOUND, format!("Character '{}' not found", charId)))
+            }
+        }
     }
-
-    Ok(Json(payload))
 }
+
+//curl -X POST localhost:7474/characters -H "Content-Type: application/json" -d '{"charId":"beans"}'
