@@ -3,13 +3,13 @@ use std::{path::{Path, PathBuf}, vec, sync::Arc};
 use reqwest::{self, Client};
 use serde_json::{self, json};
 use axum::{
-    response::IntoResponse, routing::{get, get_service, post}, Router, extract::{State, Json}
+    response::IntoResponse, routing::{get, get_service, post}, Router, extract::{State, Json}, http::StatusCode
 };
 use tokio::{fs::{self, File}, io::AsyncWriteExt};
 use tower_http::services::ServeDir;
 
 mod types;
-use types::{GameMetadata, GameData};
+use types::{GameMetadata, GameData, Player};
 
 mod characters;
 use characters::characters;
@@ -28,6 +28,16 @@ async fn main() {
     let gamedata = Arc::new(gamedata);
 
     let image_dir = PathBuf::from("./assets");
+
+
+
+    use tower_http::cors::{CorsLayer, Any};
+    use axum::http::{Method, HeaderValue};
+
+    let cors = CorsLayer::new()
+    .allow_origin(tower_http::cors::Any)
+    .allow_methods(vec![Method::GET, Method::POST, Method::OPTIONS])
+    .allow_headers(Any);
     
     let app = Router::new()
         .route("/", get(root))
@@ -47,7 +57,8 @@ async fn main() {
                         }),
                 ),
         )
-        .with_state(gamedata);
+        .with_state(gamedata)
+        .layer(cors);
 
     let listener  = tokio::net::TcpListener::bind("0.0.0.0:7474").await.unwrap();
     axum::serve(listener, app).await.unwrap();
@@ -56,11 +67,6 @@ async fn main() {
 async fn root() -> &'static str{
     "Hello World"
 }
-
-async fn account() -> &'static str{
-    "Hello account"
-}
-
 async fn guild(State(gamedata): State<Arc<GameData>>) -> impl IntoResponse {
     Json((*gamedata).clone())
 }
@@ -193,6 +199,39 @@ fn add_images_gamedata(mut gamedata:GameData) -> GameData {
 
     gamedata
 }
+use serde::{Serialize, Deserialize};
+#[derive(Deserialize, Serialize)]
+pub struct PlayerPayload {
+    pub allyCode: Option<String>
+}
+
+use serde_json::Value;
+async fn account(Json(payload): Json<PlayerPayload>) -> Result<Json<Player>, (StatusCode)>{
+    println!("player time");
+    let client = Client::new();
+    let data_url = format!("{COMLINK}/player");
+    println!("{:?}", payload.allyCode);
+    let request_body = json!({
+        "payload": {
+            "allyCode": payload.allyCode
+        },
+        "enums": false
+    });
+
+    let response = client
+        .post(data_url)
+        .json(&request_body)
+        .send()
+        .await
+        .map_err(|_| StatusCode::NOT_ACCEPTABLE)?;
+
+    let player = response
+        .json::<Player>()
+        .await
+        .map_err(|_| StatusCode::NOT_IMPLEMENTED)?;
+
+    Ok(Json(player))
+}
 // curl -X POST "https://localhost:3000/data" \
 //      -H "Content-Type: application/json" \
 //      -d '{
@@ -205,3 +244,5 @@ fn add_images_gamedata(mut gamedata:GameData) -> GameData {
 //            },
 //            "enums": false
 //          }'
+
+//curl -X POST localhost:3000/player -H "Content-Type: application/json" -d '{"payload": {"allyCode": "482841235"}}' -o player.json
