@@ -8,6 +8,9 @@ use axum::{
 use tokio::{fs::{self, File}, io::AsyncWriteExt};
 use tower_http::services::ServeDir;
 
+use tower_http::cors::{CorsLayer, Any};
+use axum::http::{Method};
+
 mod types;
 use types::{GameMetadata, GameData, Player};
 
@@ -28,11 +31,6 @@ async fn main() {
     let gamedata = Arc::new(gamedata);
 
     let image_dir = PathBuf::from("./assets");
-
-
-
-    use tower_http::cors::{CorsLayer, Any};
-    use axum::http::{Method, HeaderValue};
 
     let cors = CorsLayer::new()
     .allow_origin(tower_http::cors::Any)
@@ -102,6 +100,7 @@ async fn get_game_data() -> Result<GameData, reqwest::Error> {
 
     get_assets(&gamedata, &metadata.assetVersion).await;
     let gamedata = add_images_gamedata(gamedata);
+    println!("Setup complete");
     Ok(gamedata)
 }
 
@@ -193,7 +192,6 @@ async fn download_asset(url: String, filename: &str) -> Result<(), Box<dyn std::
 fn add_images_gamedata(mut gamedata:GameData) -> GameData {
     for unit in &mut gamedata.units {
         let filepath = format!("assets/{}.png", unit.thumbnailName);
-        println!("{}", &filepath);
         unit.iconPath = Some(filepath);
     }
 
@@ -205,8 +203,7 @@ pub struct PlayerPayload {
     pub allyCode: Option<String>
 }
 
-use serde_json::Value;
-async fn account(Json(payload): Json<PlayerPayload>) -> Result<Json<Player>, (StatusCode)>{
+async fn account(Json(payload): Json<PlayerPayload>) -> Result<Json<Player>, StatusCode>{
     println!("player time");
     let client = Client::new();
     let data_url = format!("{COMLINK}/player");

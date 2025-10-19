@@ -66,7 +66,7 @@ pub struct SelectedPlayerThing {
 #[derive(Deserialize, Serialize)]
 pub struct PlayerRating {
     pub playerSkillRating: PlayerSkillRating,
-    //pub playerRankStatus: PlayerRankStatus
+    pub playerRankStatus: PlayerRankStatus
 }
 #[derive(Deserialize, Serialize)]
 pub struct PlayerSkillRating {
