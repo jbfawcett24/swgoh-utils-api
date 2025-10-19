@@ -1,4 +1,4 @@
 /target
-/assets
+/assets/*
 data.json
 player.json
