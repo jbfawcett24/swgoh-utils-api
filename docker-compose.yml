@@ -1,0 +1,18 @@
+services:
+  app: 
+    build: .
+    depends_on:
+      - comlink
+      - asset_extractor
+    ports:
+      - "7474:7474"
+    restart: unless-stopped
+  
+  comlink:
+    image: ghcr.io/swgoh-utils/swgoh-comlink:latest
+    environment: 
+      APP_NAME: "swgoh-utils"    
+    restart: unless-stopped
+  asset_extractor:
+    image: ghcr.io/swgoh-utils/swgoh-ae2:latest
+    restart: unless-stopped

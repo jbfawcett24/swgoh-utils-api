@@ -16,6 +16,7 @@ pub struct CharPayload {
 
 pub async fn characters(gamedata: State<Arc<GameData>>, Json(payload): Json<CharPayload>) -> Result<Json<Value>, (StatusCode, String)> {
     println!("We been pinged");
+    
     match payload.charId.as_deref() {
         None | Some("") => {
             return Ok(Json(json!(**gamedata)));

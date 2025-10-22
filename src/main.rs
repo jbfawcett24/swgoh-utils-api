@@ -1,4 +1,4 @@
-use std::{path::{Path, PathBuf}, vec, sync::Arc};
+use std::{io::Write, path::{Path, PathBuf}, sync::Arc, vec};
 
 use reqwest::{self, Client};
 use serde_json::{self, json};
@@ -17,8 +17,8 @@ use types::{GameMetadata, GameData, Player};
 mod characters;
 use characters::characters;
 
-const COMLINK:&str = "http://localhost:3000";
-const ASSET_EXTRACTOR:&str = "http://localhost:3001";
+const COMLINK:&str = "http://comlink:3000";
+const ASSET_EXTRACTOR:&str = "http://asset_extractor:8080";
 
 #[tokio::main]
 //endpoints - 
@@ -26,7 +26,12 @@ const ASSET_EXTRACTOR:&str = "http://localhost:3001";
 //account - account information, all character gear, star, relic
 //guild - accounts guild, with number of each character unlocked, each user fleet, squad, and GAC rank - charId returns dictionary of all characters at every level
 //journey - journey guide information
+
 async fn main() {
+
+    println!("Starting up...");
+    std::io::stdout().flush().unwrap();
+
     let gamedata = get_game_data().await.unwrap();
     let gamedata = Arc::new(gamedata);
 
@@ -139,6 +144,11 @@ fn splice_game_data(mut gamedata: GameData) -> GameData {
 async fn get_assets(data:&GameData, asset_version:&u32) {
     println!("{}", asset_version);
     let mut asset_list:Vec<String> = vec![];
+
+    if !Path::new("assets").exists() {
+        fs::create_dir_all("assets").await.expect("Failed to create directory");
+    }
+
     let asset_files: HashSet<String> = std::fs::read_dir("assets")
     .unwrap()
     .filter_map(|entry| {
