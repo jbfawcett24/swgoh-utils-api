@@ -1,10 +1,10 @@
 #![allow(non_snake_case)]
 use std::{io::Write, path::{Path, PathBuf}, sync::Arc, vec};
 
-use reqwest::{self, Client};
+use reqwest::{self, Client, header};
 use serde_json::{self, json};
 use axum::{
-    response::IntoResponse, routing::{get, get_service, post}, Router, extract::{State, Json}, http::StatusCode
+    Router, extract::{FromRequestParts, Json, State}, http::StatusCode, response::IntoResponse, routing::{get, get_service, post}
 };
 use sqlx::{SqlitePool, Row};
 use chrono::{Utc, Duration};
@@ -14,13 +14,16 @@ use tower_http::services::ServeDir;
 
 use argon2::{
     Argon2, password_hash::{
-        PasswordHash, PasswordHasher, PasswordVerifier, SaltString, Value, rand_core::OsRng
+        PasswordHash, PasswordHasher, PasswordVerifier, SaltString, rand_core::OsRng
     }
 };
-use jsonwebtoken::{encode, Header, EncodingKey};
+use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, encode, decode};
+use async_trait::async_trait;
+
 
 use tower_http::cors::{CorsLayer, Any};
 use axum::http::{Method};
+use axum::http::request::Parts;
 
 mod types;
 use types::{GameMetadata, GameData, Player};
@@ -47,7 +50,6 @@ async fn main() {
 
     println!("creating database");
     fs::create_dir_all("/data").await.unwrap();
-    let pool = SqlitePool::connect("sqlite:////data/mydb.sqlite").await.unwrap();
 
     let gamedata = get_game_data().await.unwrap();
     let gamedata = Arc::new(gamedata);
@@ -235,7 +237,7 @@ pub struct PlayerPayload {
     pub allyCode: Option<String>
 }
 
-async fn account(Json(payload): Json<PlayerPayload>) -> Result<Json<Player>, StatusCode>{
+async fn account( AuthBearer(claims): AuthBearer, Json(payload): Json<PlayerPayload>) -> Result<Json<Player>, StatusCode>{
     let pool = SqlitePool::connect("sqlite:////data/mydb.sqlite").await.unwrap();
     let ally_code = match payload.allyCode.as_deref() {
         Some(code) => code,
@@ -409,3 +411,53 @@ async fn signUp(Json(payload): Json<SignUpPayload>) -> Result<StatusCode, Status
     Ok(StatusCode::OK)
 }
 
+pub struct AuthBearer(pub Claims);
+
+impl<S> FromRequestParts<S> for AuthBearer
+where
+    S: Send + Sync,
+
+{
+    type Rejection = (StatusCode, String);
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        _state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        // Try to extract the Authorization header
+        let auth_header = parts
+            .headers
+            .get(header::AUTHORIZATION)
+            .and_then(|h| h.to_str().ok())
+            .ok_or((
+                StatusCode::UNAUTHORIZED,
+                "Missing Authorization header".to_string(),
+            ))?;
+
+        // Check for the correct "Bearer " prefix
+        if !auth_header.starts_with("Bearer ") {
+            return Err((StatusCode::UNAUTHORIZED, "Invalid token format".into()));
+        }
+
+        // Extract the token part (after "Bearer ")
+        let token = auth_header.trim_start_matches("Bearer ").trim();
+
+        // Decode and validate the JWT
+        let secret = std::env::var("JWT_SECRET").unwrap_or_else(|_| "mysecret".into());
+
+        let decoded = decode::<Claims>(
+            token,
+            &DecodingKey::from_secret(secret.as_ref()),
+            &Validation::default(),
+        )
+        .map_err(|_| {
+            (
+                StatusCode::UNAUTHORIZED,
+                "Invalid or expired token".to_string(),
+            )
+        })?;
+
+        // If we reach here, the token is valid!
+        Ok(AuthBearer(decoded.claims))
+    }
+}
