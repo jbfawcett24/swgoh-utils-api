@@ -57,7 +57,8 @@ pub struct Player {
     pub guildBannerLogo: String,
     pub selectedPlayerTitle: SelectedPlayerThing,
     pub selectedPlayerPortrait: SelectedPlayerThing,
-    pub playerRating: PlayerRating
+    pub playerRating: PlayerRating,
+    pub last_updated: String
 }
 #[derive(Deserialize, Serialize)]
 pub struct SelectedPlayerThing {
@@ -70,7 +71,7 @@ pub struct PlayerRating {
 }
 #[derive(Deserialize, Serialize)]
 pub struct PlayerSkillRating {
-    skillRating: u32
+    pub skillRating: u32
 }
 #[derive(Deserialize, Serialize)]
 pub struct PlayerRankStatus {

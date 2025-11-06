@@ -1,18 +1,43 @@
+version: "3.9"
+
 services:
   app: 
-    build: .
-    depends_on:
-      - comlink
-      - asset_extractor
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rust_api_dev
+    volumes:
+      - .:/app
+      - /home/soup-turtle/sqlite:/data  
+      - cargo_cache:/usr/local/cargo/registry
     ports:
       - "7474:7474"
+    environment:
+      - RUST_BACKTRACE=1
+      - DATABASE_URL=sqlite:///data/mydb.sqlite
+      - JWT_SECRET=L8lkw3n3BzeMJwSL2jmCtLFHnsxYZLgP4XkhL+WuIEw=
+    command: sh -c "sleep 10 && cargo watch -x run"
     restart: unless-stopped
+    # depends_on:
+    #   comlink:
+    #     condition: service_healthy
   
   comlink:
     image: ghcr.io/swgoh-utils/swgoh-comlink:latest
     environment: 
       APP_NAME: "swgoh-utils"    
     restart: unless-stopped
+    # healthcheck:
+    #   test: ["CMD-SHELL", "sleep 5 && curl -f http://localhost:3000/livez || exit 1"]
+    #   interval: 5s
+    #   timeout: 2s
+    #   retries: 10
+    ports: 
+      - "3000:3000"
+
   asset_extractor:
     image: ghcr.io/swgoh-utils/swgoh-ae2:latest
     restart: unless-stopped
+
+volumes: 
+  cargo_cache:

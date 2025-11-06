@@ -1,3 +1,4 @@
+#![allow(non_snake_case)]
 use std::{io::Write, path::{Path, PathBuf}, sync::Arc, vec};
 
 use reqwest::{self, Client};
@@ -5,8 +6,18 @@ use serde_json::{self, json};
 use axum::{
     response::IntoResponse, routing::{get, get_service, post}, Router, extract::{State, Json}, http::StatusCode
 };
+use sqlx::{SqlitePool, Row};
+use chrono::{Utc, Duration};
+
 use tokio::{fs::{self, File}, io::AsyncWriteExt};
 use tower_http::services::ServeDir;
+
+use argon2::{
+    Argon2, password_hash::{
+        PasswordHash, PasswordHasher, PasswordVerifier, SaltString, Value, rand_core::OsRng
+    }
+};
+use jsonwebtoken::{encode, Header, EncodingKey};
 
 use tower_http::cors::{CorsLayer, Any};
 use axum::http::{Method};
@@ -16,6 +27,8 @@ use types::{GameMetadata, GameData, Player};
 
 mod characters;
 use characters::characters;
+mod roster;
+use roster::{setRosterDatabase};
 
 const COMLINK:&str = "http://comlink:3000";
 const ASSET_EXTRACTOR:&str = "http://asset_extractor:8080";
@@ -32,6 +45,10 @@ async fn main() {
     println!("Starting up...");
     std::io::stdout().flush().unwrap();
 
+    println!("creating database");
+    fs::create_dir_all("/data").await.unwrap();
+    let pool = SqlitePool::connect("sqlite:////data/mydb.sqlite").await.unwrap();
+
     let gamedata = get_game_data().await.unwrap();
     let gamedata = Arc::new(gamedata);
 
@@ -47,6 +64,9 @@ async fn main() {
         .route("/characters", post(characters))
         .route("/account", post(account))
         .route("/guild", get(guild))
+        .route("/refreshAccount", post(refresh_account_handler))
+        .route("/signUp", post(signUp))
+        .route("/signIn", post(signIn))
         .nest(
             "/assets",
             Router::new()
@@ -208,19 +228,40 @@ fn add_images_gamedata(mut gamedata:GameData) -> GameData {
     gamedata
 }
 use serde::{Serialize, Deserialize};
+
+use crate::roster::get_player_from_db;
 #[derive(Deserialize, Serialize)]
 pub struct PlayerPayload {
     pub allyCode: Option<String>
 }
 
 async fn account(Json(payload): Json<PlayerPayload>) -> Result<Json<Player>, StatusCode>{
+    let pool = SqlitePool::connect("sqlite:////data/mydb.sqlite").await.unwrap();
+    let ally_code = match payload.allyCode.as_deref() {
+        Some(code) => code,
+        None => return Err(StatusCode::BAD_REQUEST),
+    };
+
+    // Try loading from DB first
+    if let Ok(player) = get_player_from_db(ally_code, &pool).await {
+        println!("from database");
+        return Ok(Json(player));
+    }
+
+    return refreshAccount(ally_code.to_string()).await;
+}
+
+async fn refreshAccount(ally_code: String) -> Result<Json<Player>, StatusCode> {
+
+
+    let pool = SqlitePool::connect("sqlite:////data/mydb.sqlite").await.unwrap();
     println!("player time");
     let client = Client::new();
     let data_url = format!("{COMLINK}/player");
-    println!("{:?}", payload.allyCode);
+    //println!("{:?}", payload.allyCode);
     let request_body = json!({
         "payload": {
-            "allyCode": payload.allyCode
+            "allyCode": ally_code
         },
         "enums": false
     });
@@ -237,8 +278,24 @@ async fn account(Json(payload): Json<PlayerPayload>) -> Result<Json<Player>, Sta
         .await
         .map_err(|_| StatusCode::NOT_IMPLEMENTED)?;
 
+
+    println!("adding to database");
+    setRosterDatabase(&player, &pool).await.unwrap();
+
     Ok(Json(player))
 }
+
+#[derive(Deserialize)]
+struct RefreshPayload {
+    allyCode: String,
+}
+
+async fn refresh_account_handler(
+    Json(payload): Json<RefreshPayload>,
+) -> Result<Json<Player>, StatusCode> {
+    refreshAccount(payload.allyCode).await
+}
+
 // curl -X POST "https://localhost:3000/data" \
 //      -H "Content-Type: application/json" \
 //      -d '{
@@ -253,3 +310,102 @@ async fn account(Json(payload): Json<PlayerPayload>) -> Result<Json<Player>, Sta
 //          }'
 
 //curl -X POST localhost:3000/player -H "Content-Type: application/json" -d '{"payload": {"allyCode": "482841235"}}' -o player.json
+
+#[derive(Deserialize)]
+struct SignInPayload {
+    username: String,
+    password: String
+}
+
+#[derive(Deserialize, Serialize)]
+struct Claims {
+    sub: String,
+    exp: usize
+}
+
+async fn signIn(Json(payload): Json<SignInPayload>) -> Result<Json<serde_json::Value>, StatusCode>{
+    let pool = SqlitePool::connect("sqlite:////data/mydb.sqlite").await.unwrap();
+    let account_info = sqlx::query(
+        r#"
+            SELECT * FROM user WHERE username = ?
+        "#
+    )
+    .bind(&payload.username)
+    .fetch_one(&pool)
+    .await
+    .map_err(|_| StatusCode::UNAUTHORIZED)?;
+
+    let password_hash: String = account_info.try_get("password").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let allyCode: String = account_info.try_get("allyCode").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let parsed_hash = PasswordHash::new(&password_hash)
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    Argon2::default()
+    .verify_password(payload.password.as_bytes(), &parsed_hash)
+    .map_err(|_| StatusCode::UNAUTHORIZED)?;
+
+    let expiration = Utc::now()
+        .checked_add_signed(Duration::hours(24))
+        .expect("valid timestamp")
+        .timestamp() as usize;
+
+    let claims = Claims {
+        sub: allyCode.clone(),
+        exp: expiration
+    };
+
+    let secret = std::env::var("JWT_SECRET").unwrap_or_else(|_| "mysecret".into());
+    let token = encode(&Header::default(), &claims, &EncodingKey::from_secret(secret.as_ref()))
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    Ok(Json(json!({ "token": token })))
+}
+
+#[derive(Deserialize)]
+struct SignUpPayload {
+    username: String,
+    password: String,
+    allyCode: String
+}
+
+
+async fn signUp(Json(payload): Json<SignUpPayload>) -> Result<StatusCode, StatusCode> {
+    // Generate a random salt
+    let salt = SaltString::generate(&mut OsRng);
+
+    // Create an Argon2 instance
+    let argon2 = Argon2::default();
+
+    // Hash the password
+    let password_hash = argon2
+        .hash_password(payload.password.as_bytes(), &salt)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .to_string();
+
+    println!("Password hash: {}", password_hash);
+
+    // Connect to database
+    let pool = SqlitePool::connect("sqlite:////data/mydb.sqlite")
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // Insert user into database
+    sqlx::query::<sqlx::Sqlite>(
+        r#"
+        INSERT INTO user (
+            username, password, createdAt, allyCode
+        ) VALUES (?, ?, ?, ?)
+        "#
+    )
+    .bind(&payload.username)
+    .bind(&password_hash)
+    .bind(Utc::now().to_rfc3339())
+    .bind(&payload.allyCode)
+    .execute(&pool) // <-- note the &pool
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    Ok(StatusCode::OK)
+}
+
