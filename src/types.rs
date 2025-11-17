@@ -1,5 +1,6 @@
 #![allow(non_snake_case)]
 use serde::{Deserialize, Serialize};
+use chrono::Utc;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct GameMetadata {
@@ -43,6 +44,11 @@ pub struct Crew {
 
 
 //Player class 
+
+fn current_time_string() -> String {
+    Utc::now().to_rfc3339()
+}
+
 #[derive(Deserialize, Serialize)]
 pub struct Player {
     pub rosterUnit: Vec<RosterUnit>,
@@ -58,6 +64,7 @@ pub struct Player {
     pub selectedPlayerTitle: SelectedPlayerThing,
     pub selectedPlayerPortrait: SelectedPlayerThing,
     pub playerRating: PlayerRating,
+    #[serde(default = "current_time_string")]
     pub last_updated: String
 }
 #[derive(Deserialize, Serialize)]

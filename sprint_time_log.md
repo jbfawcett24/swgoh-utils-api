@@ -26,16 +26,21 @@ The expected minimum amount of time each Sprint for each category is as follows:
 
 |Date      |Start Time|Category|Description                                 |Total Minutes|
 |----------|----------|:------:|--------------------------------------------|:-----------:|
-|10/7/2025 |10:00 am  |IM      |Project planning & settup                   |120          |
-|10/9/2025 |10:00 am  |IM      |Beggining to get endpoints set up, basic calling|120      |
-|10/9/2025 |12:00 pm  |TP      |Doing small team tasks                      |60           |
-|10/11/2025|5:00 pm   |IM      |More endpoint work                          |60           |
-|10/12/2025|5:00 pm   |IM      |Interating with services                    |60           |
-|10/13/2025|2:00 pm   |MTG     |Team work meeting                           |60           |
-|10/14/2025|5:00 pm   |IM      |Endpoint work                               |120          |
-|10/15/2025|2:00 pm   |MTG     |Team Review Meeting                         |60           |
-|10/16/2025|7:00 pm   |IM      |Client                                      |120          |
-|10/17/2025|2:00 pm   |MTG     |Individual Review Meeting                   |60           |
+|11/3/2025 |2:00 pm   |MTG     |Planning Meeting                            |60           |
+|11/3/2025 |5:00 pm   |IM      |Project planning & set up                   |120          |
+|11/4/2025 |5:00 pm   |IM      |Creating the schemas for the tables         |120          |
+|11/5/2025 |12:00 pm  |TP      |Frontend QOL                                |60           |
+|11/5/2025 |2:00 pm   |TP      |Team meeting                                |60           |
+|11/6/2025 |5:00 pm   |IM      |Adding roster data to database + retrieval  |120          |
+|11/7/2025 |2:00 pm   |MTG     |Standup Meeting                             |60           |
+|11/7/2025 |5:00 pm   |IM      |Frontend integration, password hashing      |60           |
+|11/8/2025 |12:00 PM  |IM      |Sign up function working, starting on JWT   |60           |
+|11/10/2025|2:00 PM   |TM      |Team Meeting                                |60           |
+|11/11/2025|4:00 PM   |TM      |Integration                                 |60           |
+|11/11/2025|5:00 PM   |IM      |Full JWT working                            |60           |
+|11/12/2025|2:00 pm   |MTG     |Team Review Meeting                         |60           |
+|11/13/2025|7:00 pm   |IM      |Sync with game                              |60           |
+|11/14/2025|2:00 pm   |MTG     |Individual Review Meeting                   |60           |
 
 _Note: Add more rows as needed._
 
@@ -44,6 +49,6 @@ _Note: Add more rows as needed._
 |Categroy                       |Total Time (Hours:Minutes)|
 |-------------------------------|:------------------------:|
 |IM - Individual Module         |10:00                     |
-|TP - Team Project              |3:00                      |
-|MTG - Class Meetings           |2:00                      |
-|**TOTAL**                      |16:00                     |
+|TP - Team Project              |4:00                      |
+|MTG - Class Meetings           |4:00                      |
+|**TOTAL**                      |18:00                     |

@@ -7,23 +7,25 @@ Pulls data from Star Wars: Galaxy of Heroes and returns it for use in my swgoh u
 
 Steps to build and/or run the software:
 
-1. install rustup/cargo
-2. run the swgoh-comlink and swgoh-ae2 docker images on ports 3000 and 3001 - https://github.com/swgoh-utils
-3. '''cargo run''' to start the project
-4. if you want the frontend, go to the frontent folder - '''npm run dev'''
+1. Have Docker installed
+2. Use docker compose to run all of the images within their own network
+3. by default runs on port 7474
 
 Instructions for using the software:
 
 1. /characters - POST request with a charId key that is optional. if left blank it will return all of the characters. otherwise it will return the character based on its baseId
-2. /account -  POST request with an allyCode key. returns account information such as character levels, grand arena ranking, and guild
+2. /account -  Uses JWT for authentication, returns information about the account in the JWT. pulls from the database if it is in there, otherwise get info from the game
 3. /assets - static assets such as character thumbnails
+4. /signIn - checks against database, returns a JWT if correct
+5. /signUp - Creates a new user
+6. /refreshAccount - syncs account data with game and puts into database
 
 ## Development Environment 
 
 To recreate the development environment, you need the following software and/or libraries with the specified versions:
 
-* see [Cargo.toml](./Cargo.toml) for libraries
 * vsCode for development
+* Docker
 
 ## Useful Websites to Learn More
 
@@ -36,6 +38,6 @@ I found these websites useful in developing this software:
 
 The following items I plan to fix, improve, and/or add to this project in the future:
 
-* [ ] /guild endpoint -  returns information from the guild, such as all characters owned, tb results, members
-* [ ] better frontend - full website for all users to view the information
-* [ ] database - store account information and allow users to set goals with their account that is saved
+- [ ] /guild endpoint -  returns information from the guild, such as all characters owned, tb results, members
+- [X] better frontend - full website for all users to view the information
+- [X] database - store account information and allow users to set goals with their account that is saved

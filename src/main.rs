@@ -6,7 +6,7 @@ use serde_json::{self, json};
 use axum::{
     Router, extract::{FromRequestParts, Json, State}, http::StatusCode, response::IntoResponse, routing::{get, get_service, post}
 };
-use sqlx::{SqlitePool, Row};
+use sqlx::{SqlitePool, Row, Error as SqlxError};
 use chrono::{Utc, Duration};
 
 use tokio::{fs::{self, File}, io::AsyncWriteExt};
@@ -64,9 +64,9 @@ async fn main() {
     let app = Router::new()
         .route("/", get(root))
         .route("/characters", post(characters))
-        .route("/account", post(account))
+        .route("/account", get(account))
         .route("/guild", get(guild))
-        .route("/refreshAccount", post(refresh_account_handler))
+        .route("/refreshAccount", get(refresh_account_handler))
         .route("/signUp", post(signUp))
         .route("/signIn", post(signIn))
         .nest(
@@ -237,16 +237,18 @@ pub struct PlayerPayload {
     pub allyCode: Option<String>
 }
 
-async fn account( AuthBearer(claims): AuthBearer, Json(payload): Json<PlayerPayload>) -> Result<Json<Player>, StatusCode>{
+async fn account( AuthBearer(claims): AuthBearer) -> Result<Json<Player>, StatusCode>{
     let pool = SqlitePool::connect("sqlite:////data/mydb.sqlite").await.unwrap();
-    let ally_code = match payload.allyCode.as_deref() {
-        Some(code) => code,
-        None => return Err(StatusCode::BAD_REQUEST),
-    };
+    // let ally_code = match payload.allyCode.as_deref() {
+    //     Some(code) => code,
+    //     None => return Err(StatusCode::BAD_REQUEST),
+    // };
+    let ally_code = &claims.sub;
 
     // Try loading from DB first
     if let Ok(player) = get_player_from_db(ally_code, &pool).await {
         println!("from database");
+        println!("{}", &player.name);
         return Ok(Json(player));
     }
 
@@ -257,7 +259,7 @@ async fn refreshAccount(ally_code: String) -> Result<Json<Player>, StatusCode> {
 
 
     let pool = SqlitePool::connect("sqlite:////data/mydb.sqlite").await.unwrap();
-    println!("player time");
+    println!("player time {}", ally_code);
     let client = Client::new();
     let data_url = format!("{COMLINK}/player");
     //println!("{:?}", payload.allyCode);
@@ -275,13 +277,15 @@ async fn refreshAccount(ally_code: String) -> Result<Json<Player>, StatusCode> {
         .await
         .map_err(|_| StatusCode::NOT_ACCEPTABLE)?;
 
+    println!("response recieved");
     let player = response
         .json::<Player>()
         .await
-        .map_err(|_| StatusCode::NOT_IMPLEMENTED)?;
+        .map_err(|e| {println!("error {}", e); return StatusCode::NOT_IMPLEMENTED;})?;
 
+    sqlx::query(r#"DELETE FROM rosterUnit WHERE allycode = ?"#).bind(ally_code).execute(&pool).await;
 
-    println!("adding to database");
+    println!("adding to database {}", player.name);
     setRosterDatabase(&player, &pool).await.unwrap();
 
     Ok(Json(player))
@@ -293,9 +297,9 @@ struct RefreshPayload {
 }
 
 async fn refresh_account_handler(
-    Json(payload): Json<RefreshPayload>,
+    AuthBearer(claims): AuthBearer
 ) -> Result<Json<Player>, StatusCode> {
-    refreshAccount(payload.allyCode).await
+    refreshAccount(claims.sub).await
 }
 
 // curl -X POST "https://localhost:3000/data" \
@@ -326,6 +330,7 @@ struct Claims {
 }
 
 async fn signIn(Json(payload): Json<SignInPayload>) -> Result<Json<serde_json::Value>, StatusCode>{
+    println!("we signing in");
     let pool = SqlitePool::connect("sqlite:////data/mydb.sqlite").await.unwrap();
     let account_info = sqlx::query(
         r#"
@@ -361,6 +366,8 @@ async fn signIn(Json(payload): Json<SignInPayload>) -> Result<Json<serde_json::V
     let token = encode(&Header::default(), &claims, &EncodingKey::from_secret(secret.as_ref()))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
+    println!("{}", token);
+
     Ok(Json(json!({ "token": token })))
 }
 
@@ -368,11 +375,13 @@ async fn signIn(Json(payload): Json<SignInPayload>) -> Result<Json<serde_json::V
 struct SignUpPayload {
     username: String,
     password: String,
-    allyCode: String
+    allyCode: String,
+    email: String
 }
 
 
 async fn signUp(Json(payload): Json<SignUpPayload>) -> Result<StatusCode, StatusCode> {
+
     // Generate a random salt
     let salt = SaltString::generate(&mut OsRng);
 
@@ -386,6 +395,8 @@ async fn signUp(Json(payload): Json<SignUpPayload>) -> Result<StatusCode, Status
         .to_string();
 
     println!("Password hash: {}", password_hash);
+    refreshAccount(payload.allyCode.clone()).await;
+    println!("setting plater to db");
 
     // Connect to database
     let pool = SqlitePool::connect("sqlite:////data/mydb.sqlite")
@@ -393,20 +404,32 @@ async fn signUp(Json(payload): Json<SignUpPayload>) -> Result<StatusCode, Status
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Insert user into database
-    sqlx::query::<sqlx::Sqlite>(
+    let result = sqlx::query::<sqlx::Sqlite>(
         r#"
         INSERT INTO user (
-            username, password, createdAt, allyCode
-        ) VALUES (?, ?, ?, ?)
+            username, password, createdAt, allyCode, email
+        ) VALUES (?, ?, ?, ?, ?)
         "#
     )
     .bind(&payload.username)
     .bind(&password_hash)
     .bind(Utc::now().to_rfc3339())
     .bind(&payload.allyCode)
+    .bind(&payload.email)
     .execute(&pool) // <-- note the &pool
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await;
+
+
+    match result {
+        Ok(_) => return Ok(StatusCode::OK),
+        Err(SqlxError::Database(db_err)) if db_err.message().contains("UNIQUE constraint failed") => {
+            return Err(StatusCode::CONFLICT) // 409 Conflict is appropriate here
+        }
+        Err(e) => {
+            eprintln!("Other SQLx error: {:?}", e);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
 
     Ok(StatusCode::OK)
 }
@@ -461,3 +484,5 @@ where
         Ok(AuthBearer(decoded.claims))
     }
 }
+
+//curl -i -X POST http://localhost:7474/account -H "Content-Type: application/json" -H "Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiI0ODI4NDEyMzUiLCJleHAiOjE3NjI1NTA3OTJ9.nHDNNWiEcj8bD2mGNcmF7T4rqnkVYCJNaG7RmiD9S3Q" -d '{"allyCode": "482841235"}'

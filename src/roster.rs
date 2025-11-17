@@ -3,6 +3,7 @@ use chrono::Utc;
 use crate::types::{Player};
 
 pub async fn setRosterDatabase(player: &Player, pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
+    println!("setting roster database");
     sqlx::query(
         r#"
         INSERT OR REPLACE INTO account (
@@ -30,7 +31,7 @@ pub async fn setRosterDatabase(player: &Player, pool: &Pool<Sqlite>) -> Result<(
     .execute(pool)
     .await?;
 
-
+    println!("setting units");
     for unit in &player.rosterUnit {
         sqlx::query(
             r#"
@@ -114,6 +115,7 @@ pub async fn get_player_from_db(ally_code: &str, pool: &sqlx::Pool<sqlx::Sqlite>
             },
         },
         last_updated: account.last_updated
+
     };
 
     println!("{}", player.name);
