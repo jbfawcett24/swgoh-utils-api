@@ -1,10 +1,10 @@
 #![allow(non_snake_case)]
-use std::{io::Write, path::{Path, PathBuf}, sync::Arc, vec};
+use std::{io::Write, path::{Path, PathBuf}, vec};
 
 use reqwest::{self, Client, header};
 use serde_json::{self, json};
 use axum::{
-    Router, extract::{FromRequestParts, Json, State}, http::StatusCode, response::IntoResponse, routing::{get, get_service, post}
+    Router, extract::{FromRequestParts, Json}, http::StatusCode, response::IntoResponse, routing::{get, get_service, post}
 };
 use sqlx::{SqlitePool, Row, Error as SqlxError};
 use chrono::{Utc, Duration};
@@ -19,8 +19,7 @@ use argon2::{
 };
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, encode, decode};
 
-use tower_http::cors::{CorsLayer, Any};
-use axum::http::{Method};
+use tower_http::cors::{CorsLayer};
 use axum::http::request::Parts;
 
 mod types;
@@ -65,9 +64,27 @@ async fn main() {
     dbSetup().await;
 
     let gamedata = get_game_data().await.unwrap();
-    let gamedata = Arc::new(gamedata);
-
     setCharactersToDB(&gamedata).await;
+
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(24*60*60));
+
+        loop {
+            interval.tick().await;
+
+            println!("checking for game data updates");
+
+            match get_game_data().await {
+                Ok(new_game_data) => {
+                    setCharactersToDB(&new_game_data).await;
+                    println!("game data updated");
+                }
+                Err(e) => {
+                    eprintln!("Failed to update game data : {}", e)
+                }
+            }
+        }
+    });
 
     let image_dir = PathBuf::from("./assets");
 
@@ -99,7 +116,6 @@ async fn main() {
                         }),
                 ),
         )
-        .with_state(gamedata)
         .layer(cors);
 
     let listener  = tokio::net::TcpListener::bind("0.0.0.0:7474").await.unwrap();
@@ -109,8 +125,8 @@ async fn main() {
 async fn root() -> &'static str{
     "Hello World"
 }
-async fn guild(State(gamedata): State<Arc<GameData>>) -> impl IntoResponse {
-    Json((*gamedata).clone())
+async fn guild() -> impl IntoResponse {
+    "hi"
 }
 
 
@@ -412,7 +428,7 @@ async fn signUp(Json(payload): Json<SignUpPayload>) -> Result<StatusCode, Status
         .to_string();
 
     println!("Password hash: {}", password_hash);
-    refreshAccount(payload.allyCode.clone()).await.unwrap();
+    let _ = refreshAccount(payload.allyCode.clone()).await.unwrap();
     println!("setting plater to db");
 
     // Connect to database

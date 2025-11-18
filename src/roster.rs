@@ -152,5 +152,4 @@ struct RosterUnitRow {
     currentLevel: i64,
     currentTier: i64,
     relicTier: Option<i64>,
-    allyCode: String,
 }
