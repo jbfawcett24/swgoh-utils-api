@@ -18,8 +18,6 @@ use argon2::{
     }
 };
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, encode, decode};
-use async_trait::async_trait;
-
 
 use tower_http::cors::{CorsLayer, Any};
 use axum::http::{Method};
@@ -29,9 +27,11 @@ mod types;
 use types::{GameMetadata, GameData, Player};
 
 mod characters;
-use characters::characters;
+use characters::{characters, setCharactersToDB};
 mod roster;
 use roster::{setRosterDatabase};
+mod setup;
+use setup::{dbSetup};
 
 const COMLINK:&str = "http://comlink:3000";
 const ASSET_EXTRACTOR:&str = "http://asset_extractor:8080";
@@ -45,21 +45,38 @@ const ASSET_EXTRACTOR:&str = "http://asset_extractor:8080";
 
 async fn main() {
 
+        std::panic::set_hook(Box::new(|panic_info| {
+        eprintln!("PANIC: {:?}", panic_info);
+        if let Some(location) = panic_info.location() {
+            eprintln!(
+                "Panic occurred in file '{}' at line {}",
+                location.file(),
+                location.line()
+            );
+        }
+    }));
+
     println!("Starting up...");
     std::io::stdout().flush().unwrap();
 
     println!("creating database");
     fs::create_dir_all("/data").await.unwrap();
 
+    dbSetup().await;
+
     let gamedata = get_game_data().await.unwrap();
     let gamedata = Arc::new(gamedata);
 
+    setCharactersToDB(&gamedata).await;
+
     let image_dir = PathBuf::from("./assets");
 
-    let cors = CorsLayer::new()
-    .allow_origin(tower_http::cors::Any)
-    .allow_methods(vec![Method::GET, Method::POST, Method::OPTIONS])
-    .allow_headers(Any);
+    // let cors = CorsLayer::new()
+    // .allow_origin(tower_http::cors::Any)
+    // .allow_methods(vec![Method::GET, Method::POST, Method::OPTIONS])
+    // .allow_headers(Any);
+
+    let cors = CorsLayer::permissive();
     
     let app = Router::new()
         .route("/", get(root))
@@ -283,7 +300,7 @@ async fn refreshAccount(ally_code: String) -> Result<Json<Player>, StatusCode> {
         .await
         .map_err(|e| {println!("error {}", e); return StatusCode::NOT_IMPLEMENTED;})?;
 
-    sqlx::query(r#"DELETE FROM rosterUnit WHERE allycode = ?"#).bind(ally_code).execute(&pool).await;
+    sqlx::query(r#"DELETE FROM rosterUnit WHERE allycode = ?"#).bind(ally_code).execute(&pool).await.unwrap();
 
     println!("adding to database {}", player.name);
     setRosterDatabase(&player, &pool).await.unwrap();
@@ -291,10 +308,10 @@ async fn refreshAccount(ally_code: String) -> Result<Json<Player>, StatusCode> {
     Ok(Json(player))
 }
 
-#[derive(Deserialize)]
-struct RefreshPayload {
-    allyCode: String,
-}
+//#[derive(Deserialize)]
+// struct RefreshPayload {
+//     allyCode: String,
+// }
 
 async fn refresh_account_handler(
     AuthBearer(claims): AuthBearer
@@ -324,7 +341,7 @@ struct SignInPayload {
 }
 
 #[derive(Deserialize, Serialize)]
-struct Claims {
+pub struct Claims {
     sub: String,
     exp: usize
 }
@@ -395,7 +412,7 @@ async fn signUp(Json(payload): Json<SignUpPayload>) -> Result<StatusCode, Status
         .to_string();
 
     println!("Password hash: {}", password_hash);
-    refreshAccount(payload.allyCode.clone()).await;
+    refreshAccount(payload.allyCode.clone()).await.unwrap();
     println!("setting plater to db");
 
     // Connect to database
@@ -430,8 +447,6 @@ async fn signUp(Json(payload): Json<SignUpPayload>) -> Result<StatusCode, Status
             return Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
-
-    Ok(StatusCode::OK)
 }
 
 pub struct AuthBearer(pub Claims);
