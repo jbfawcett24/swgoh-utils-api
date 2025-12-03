@@ -31,6 +31,8 @@ mod roster;
 use roster::{setRosterDatabase};
 mod setup;
 use setup::{dbSetup};
+mod plan;
+use plan::{set_plan};
 
 const COMLINK:&str = "http://comlink:3000";
 const ASSET_EXTRACTOR:&str = "http://asset_extractor:8080";
@@ -62,9 +64,7 @@ async fn main() {
     fs::create_dir_all("/data").await.unwrap();
 
     dbSetup().await;
-
-    let gamedata = get_game_data().await.unwrap();
-    setCharactersToDB(&gamedata).await;
+    let pool = SqlitePool::connect("sqlite:////data/mydb.sqlite").await.unwrap();
 
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(24*60*60));
@@ -103,6 +103,8 @@ async fn main() {
         .route("/refreshAccount", get(refresh_account_handler))
         .route("/signUp", post(signUp))
         .route("/signIn", post(signIn))
+        .route("/set_plan", post(set_plan))
+        .route("/get_plan", get(get_plan))
         .nest(
             "/assets",
             Router::new()
@@ -116,7 +118,8 @@ async fn main() {
                         }),
                 ),
         )
-        .layer(cors);
+        .layer(cors)
+        .with_state(pool);
 
     let listener  = tokio::net::TcpListener::bind("0.0.0.0:7474").await.unwrap();
     axum::serve(listener, app).await.unwrap();
@@ -264,7 +267,7 @@ fn add_images_gamedata(mut gamedata:GameData) -> GameData {
 }
 use serde::{Serialize, Deserialize};
 
-use crate::roster::get_player_from_db;
+use crate::{plan::get_plan, roster::get_player_from_db};
 #[derive(Deserialize, Serialize)]
 pub struct PlayerPayload {
     pub allyCode: Option<String>

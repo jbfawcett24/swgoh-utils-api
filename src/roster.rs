@@ -33,6 +33,7 @@ pub async fn setRosterDatabase(player: &Player, pool: &Pool<Sqlite>) -> Result<(
 
     println!("setting units");
     for unit in &player.rosterUnit {
+        let baseId:&Vec<&str> = &unit.definitionId.split(":").collect();
         sqlx::query(
             r#"
             INSERT OR REPLACE INTO rosterUnit (
@@ -40,7 +41,7 @@ pub async fn setRosterDatabase(player: &Player, pool: &Pool<Sqlite>) -> Result<(
             ) VALUES (?, ?, ?, ?, ?, ?)
             "#
         )
-        .bind(&unit.definitionId)
+        .bind(baseId[0])
         .bind(unit.currentRarity)
         .bind(unit.currentLevel)
         .bind(unit.currentTier)

@@ -54,6 +54,25 @@ pub async fn dbSetup() {
             PRIMARY KEY (equipmentId, tier, baseId),
             FOREIGN KEY (tier, baseId) REFERENCES unitTier(tier, baseId)
         );
+
+        CREATE TABLE IF NOT EXISTS plan (
+            id INTEGER PRIMARY KEY,
+            planName TEXT NOT NULL,
+            icon TEXT NOT NULL,
+            allyCode TEXT NOT NULL,
+            FOREIGN KEY (allyCode) REFERENCES account(allyCode)
+        );
+
+        CREATE TABLE IF NOT EXISTS charPlan (
+            id INTEGER PRIMARY KEY,
+            charName TEXT NOT NULL,
+            goalStars INT NOT NULL,
+            goalGear INT NOT NULL,
+            goalRelic INT NOT NULL,
+            baseId TEXT NOT NULL,
+            planId INTEGER NOT NULL,
+            FOREIGN KEY (planId) REFERENCES plan(id)
+        );
         "#
     ).execute(&pool).await.unwrap();
 
